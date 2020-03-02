@@ -1,74 +1,53 @@
-import os
+import os, sys
 import pygame
 import math
 from multiprocessing import Process
 import time
+
+import cppyy
+cppyy.include("program.h")
+cppyy.load_library("cppCalc")
+from cppyy.gbl import Calc
+
+cpp = Calc()
 
 # Initialises Pygame graphics library and hides debugging output
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = "hide"
 os.environ['SDL_VIDEO_CENTERED'] = '0'
 pygame.display.init()
 
-
 # Config Options
 # Increasing these will produce a more accurate graph. but will exponentially impact calculation time
 
-w = 850
-h = 850
+window_Width = 1300
+window_Height = 850
+
+graph_Width = 850
+graph_Height = 850
 precision = 100
 
-x_Zoom = 0
-y_Zoom = 0
+zoom = 2
 
 x_Offset = 0
 y_Offset = 0
-
 # END Config Options
 
-def mod(z):
-	# calculates the modulus of a complex number
-	return (math.sqrt((z.real**2) + (z.imag**2)))
-
 def calcMandelbrotPoint(x,y):
-	previous_Result = 0 + 0j
-	current_Result = 0 + 0j
-	times_Looped = 0
-
-	while mod(current_Result) <= 2 and times_Looped < precision:
-		current_Result = (previous_Result**2) + (x + y*1j)
-		previous_Result = current_Result
-		times_Looped += 1
-
+	times_Looped = cpp.calcMandelbrotPoint(x,y,precision)
 	if times_Looped != precision:
-		if times_Looped < 15:
-			return pygame.Color(255 - times_Looped,0,100 + times_Looped*2)
-		elif times_Looped < 150:
-			return pygame.Color(255 - times_Looped,0,times_Looped)
+		if times_Looped < int(precision/5):
+			return pygame.Color(0,0,255)
 		else:
-			return pygame.Color(255,255,255)
+			return pygame.Color(255,0,0)
 	else:
 		return pygame.Color(0,0,0)
 
-def calculate_Quad1(render_Array):
-	# Loops through the points within the first quadrant of the argand diagram
-	for y in range(0,int(h/2)):
-		for x in range(int(w/2),w):
-			render_Array[x, y] = calcMandelbrotPoint(((x - (w/2))/w) * 3,((y - (h/2))/h) * 3)
-
-def calculate_Quad2(render_Array):
-	for y in range(0,int(h/2)):
-		for x in range(0,int(w/2)):
-			render_Array[x, y] = calcMandelbrotPoint(((x - (w/2))/w) * 3,((y - (h/2))/h) * 3)
-
-def calculate_Quad3(render_Array):
-	for y in range(int(h/2),h):
-		for x in range(0,int(w/2)):
-			render_Array[x, y] = calcMandelbrotPoint(((x - (w/2))/w) * 3,((y - (h/2))/h) * 3)
-
-def calculate_Quad4(render_Array):
-	for y in range(int(h/2),h):
-		for x in range(int(w/2),w):
-			render_Array[x, y] = calcMandelbrotPoint(((x - (w/2))/w) * 3,((y - (h/2))/h) * 3)
+def calculateSector(render_Array,sectorMap,sector_X,sector_Y):
+	for y in range(sectorMap[1][sector_Y][0],sectorMap[1][sector_Y][1]):
+		if (sector_X == 1 and sector_Y == 2):
+			pygame.display.update()
+		for x in range(sectorMap[0][sector_X][0],sectorMap[0][sector_X][1]):
+			render_Array[x][y] = calcMandelbrotPoint(((x - (graph_Width/2))/graph_Width) * 3,((y - (graph_Height/2))/graph_Height) * 3)
 
 def render_MandelbrotSet():
 	# create a 2D array each representing a single pixel on the screen
@@ -79,36 +58,31 @@ def render_MandelbrotSet():
 
 	# Sets the function to calculate each quadrant of the graph to a different CPU Core
 	# This allow for simultaneous multiprocessing of the data (can reduce the time to update by 60% or more)
-	core1_Process = Process(target=calculate_Quad1, args=(render_Array,))
-	core2_Process = Process(target=calculate_Quad2, args=(render_Array,))
-	core3_Process = Process(target=calculate_Quad3, args=(render_Array,))
-	core4_Process = Process(target=calculate_Quad4, args=(render_Array,))
+	sectorMap =  [
+					[[0,int(graph_Width/4)],[int(graph_Width/4),int(graph_Width/2)],[int(graph_Width/2),int((graph_Width/4)*3)],[int((graph_Width/4)*3),graph_Width]],
+					[[0,int(graph_Height/4)],[int(graph_Height/4),int(graph_Height/2)],[int(graph_Height/2),int((graph_Height/4)*3)],[int((graph_Height/4)*3),graph_Height]]
+				];
 
-	# Starts each process
-	core1_Process.start()
-	core2_Process.start()
-	core3_Process.start()
-	core4_Process.start()
+	core_Processes = []
+	for y in range(4):
+		for x in range(4):
+			core_Processes.append(Process(target=calculateSector, args=(render_Array,sectorMap,x,y,)))
 
-	# ends waits for the end of each process
-	core1_Process.join()
-	core2_Process.join()
-	core3_Process.join()
-	core4_Process.join()
+	for process in core_Processes:
+		process.start()
+
+	for process in core_Processes:
+		process.join()
 
 	# renders the final array to the screen surface
 	render_Array.make_surface()
-
 	# prints to the console the time taken to compute
 	print("Computational Time: %5.1f secs" % (time.perf_counter() - time_Start))
 
-	# Updates the screen with the new result
-	pygame.display.update()
-
 def __main__():
 	global screen
-	screen = pygame.display.set_mode((w,h),pygame.RESIZABLE)
-
+	screen = pygame.display.set_mode((window_Width,window_Height))
+	screen.fill((46, 48, 58))
 	# Sets the application window title
 	pygame.display.set_caption("Mandelbrot Set")
 
